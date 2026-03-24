@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block content %}
+<main class="container">
+    <div class="dashboard-header">
+        <div>
+            <h1 class="auth-title" style="text-align: left;">Funnel Analytics Dashboard</h1>
+            <p class="text-secondary">Analyze where your users are dropping off.</p>
+        </div>
+    </div>
+
+    <!-- Script Box -->
+    <div class="glass-panel script-box">
+        <h3>1. Embed This Script</h3>
+        <p class="text-secondary" style="margin-bottom: 1rem; font-size: 0.9rem;">
+            Copy and paste this snippet into the <code>&lt;head&gt;</code> of your website. It will automatically track page loads.
+            You can also manually track events using <code>window.FlowTrace.track("step_name")</code>.
+        </p>
+        <pre id="script-code">&lt;script src="{{ request.host_url.rstrip('/') }}/flowtrace.js?id={{ script_id }}"&gt;&lt;/script&gt;</pre>
+        <button class="btn-copy" onclick="copyScript()">Copy Script</button>
+    </div>
+    <div class="glass-panel" style="margin-top: 2rem; padding: 1.5rem;">
+    <h3>2. Conversion Funnel</h3>
+    <p class="text-secondary" style="font-size: 0.8rem; margin-bottom: 1rem;">Total views per step name.</p>
+    <div style="height: 300px; width: 100%;">
+        <canvas id="funnelChart"></canvas>
+    </div>
+</div>
+   <div class="glass-panel" style="margin-top: 2rem; padding: 1.5rem;">
+        <h3>3. Real-time User Sessions</h3>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 1rem; color: white;">
+            <thead>
+                <tr style="text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                    <th style="padding: 10px;">Session ID</th>
+                    <th style="padding: 10px;">Last Seen At</th>
+                    <th style="padding: 10px;">Status</th>
+                    <th style="padding: 10px;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if user_sessions %}
+                    {% for user in user_sessions %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 12px; font-family: monospace; font-size: 0.8rem;">
+                            {{ user.email if user.email else user.session_id[:8] }}
+                        </td>
+                        <td style="padding: 12px;">{{ user.last_step }}</td>
+                        <td style="padding: 12px;">
+                            <span class="status-pill" style="background: #fff1f2; color: #e11d48; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">
+                                Stuck
+                            </span>
+                        </td>
+                        <td style="padding: 12px;">
+                            <button class="btn-copy" style="padding: 5px 10px; font-size: 0.7rem;" 
+                                    onclick="sendNudge('{{ user.session_id }}')">
+                                Send AI Nudge
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" style="padding: 20px; text-align: center; color: #888;">No active sessions found.</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+    // --- 1. Funnel Chart Logic ---
+    const ctx = document.getElementById('funnelChart').getContext('2d');
+
+    // Get data from Flask using | tojson to safely pass Python lists to JS
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            // This now contains unique steps like ['/', '/verification', 'submit_email']
+            labels: '{{ chart_labels | tojson }}', 
+            datasets: [{
+                label: 'Total Views',
+                data: '{{ chart_values | tojson }}',
+                backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                borderColor: '#6366f1',
+                borderWidth: 2,
+                borderRadius: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#888' }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#fff' } // Makes step names visible on dark background
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+
+    // --- 2. Copy Script Function ---
+    function copyScript() {
+        const code = document.getElementById('script-code').innerText;
+        navigator.clipboard.writeText(code);
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'success',
+            title: 'Copied to clipboard!',
+            showConfirmButton: false,
+            timer: 1500
+        });
+    }
+
+    // --- 3. Nudge Function ---
+    function sendNudge(sid) {
+        fetch('/nudge/' + sid)
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    Swal.fire('Error', 'Could not find session data.', 'error');
+                    return;
+                }
+
+                Swal.fire({
+                    title: 'Smart Nudge Ready',
+                    html: `
+                        <div style="text-align: left; padding: 10px;">
+                            <p style="color: #888; font-size: 0.9rem; margin-bottom: 5px;">
+                                Target: <b style="color: #fff;">${data.target_email || 'Anonymous User'}</b>
+                            </p>
+                            <p style="color: #888; font-size: 0.9rem; margin-bottom: 15px;">
+                                Last Activity: <span style="color: #6366f1;">${data.last_step}</span>
+                            </p>
+                            <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                                <i style="color: #ccc;">"${data.message}"</i>
+                            </div>
+                        </div>
+                    `,
+                    icon: 'info',
+                    showCancelButton: true,
+                    confirmButtonText: 'Send Email Now',
+                    cancelButtonText: 'Customize',
+                    background: '#1a1e30',
+                    color: '#fff',
+                    confirmButtonColor: '#6366f1'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        Swal.fire({
+                            title: 'Sent!',
+                            text: 'The recovery email has been dispatched.',
+                            icon: 'success',
+                            background: '#1a1e30',
+                            color: '#fff'
+                        });
+                    }
+                });
+            })
+            .catch(err => {
+                console.error("Nudge Error:", err);
+                Swal.fire('Error', 'Failed to generate nudge.', 'error');
+            });
+    }
+</script>
+{% endblock %}
